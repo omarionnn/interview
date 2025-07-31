@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Eye, Phone, Clock, User, Calendar } from "lucide-react"
+import { Eye, Phone, Clock, User, Calendar, Trash2 } from "lucide-react"
 import { Call } from "@/types"
 
 interface CallLogsTableProps {
@@ -13,8 +13,8 @@ interface CallLogsTableProps {
 }
 
 interface CallDetails {
-  id: string
-  status: string
+  id?: string
+  status?: string
   phoneNumber?: string
   recipientName?: string
   startedAt?: string
@@ -32,6 +32,7 @@ export function CallLogsTable({ }: CallLogsTableProps) {
   const [selectedCall, setSelectedCall] = useState<Call | null>(null)
   const [callDetails, setCallDetails] = useState<CallDetails | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
+  const [deleteConfirmCall, setDeleteConfirmCall] = useState<Call | null>(null)
 
   useEffect(() => {
     loadCalls()
@@ -69,6 +70,38 @@ export function CallLogsTable({ }: CallLogsTableProps) {
       setCallDetails({ error: 'Failed to load call details' })
     } finally {
       setDetailsLoading(false)
+    }
+  }
+
+  const handleDeleteCall = async (call: Call) => {
+    try {
+      // Remove from localStorage
+      const existingCalls = JSON.parse(localStorage.getItem('calls') || '[]')
+      const updatedCalls = existingCalls.filter((c: Call) => c.id !== call.id && c.vapiCallId !== call.vapiCallId)
+      localStorage.setItem('calls', JSON.stringify(updatedCalls))
+
+      // Try to delete the associated transcript file
+      if (call.vapiCallId || call.id) {
+        try {
+          await fetch(`/api/calls/${call.vapiCallId || call.id}/transcript`, {
+            method: 'DELETE'
+          })
+        } catch (error) {
+          console.warn('Could not delete transcript file:', error)
+        }
+      }
+
+      // Refresh the calls list
+      loadCalls()
+      setDeleteConfirmCall(null)
+
+      // Close details dialog if the deleted call was being viewed
+      if (selectedCall && (selectedCall.id === call.id || selectedCall.vapiCallId === call.vapiCallId)) {
+        setSelectedCall(null)
+        setCallDetails(null)
+      }
+    } catch (error) {
+      console.error('Error deleting call:', error)
     }
   }
 
@@ -187,6 +220,18 @@ export function CallLogsTable({ }: CallLogsTableProps) {
                     <Eye className="h-3 w-3" />
                     View Details
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeleteConfirmCall(call)
+                    }}
+                    className="flex items-center gap-1 text-red-600 border-red-200 hover:bg-red-50"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Delete
+                  </Button>
                 </div>
               </div>
             </div>
@@ -225,9 +270,7 @@ export function CallLogsTable({ }: CallLogsTableProps) {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-muted-foreground">Status</p>
-                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-sm font-medium ${getStatusColor(callDetails.status)}`}>
-                    {callDetails.status?.charAt(0).toUpperCase() + callDetails.status?.slice(1)}
-                  </span>
+                  {callDetails.status && getStatusBadge(callDetails.status)}
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-muted-foreground">Duration</p>
@@ -251,7 +294,28 @@ export function CallLogsTable({ }: CallLogsTableProps) {
 
               {/* Transcript Section */}
               <div className="space-y-3">
-                <h3 className="text-lg font-semibold">Call Transcript</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Call Transcript</h3>
+                  {(callDetails.status === 'completed' || callDetails.status === 'ended') && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          const response = await fetch(`/api/calls/${selectedCall?.vapiCallId || selectedCall?.id}/debug`)
+                          const debugData = await response.json()
+                          console.log('Call Debug Data:', debugData)
+                          alert('Debug data logged to console. Check browser developer tools.')
+                        } catch (error) {
+                          console.error('Debug error:', error)
+                        }
+                      }}
+                      className="text-xs"
+                    >
+                      Debug Messages
+                    </Button>
+                  )}
+                </div>
                 {callDetails.transcript ? (
                   <div className="bg-gray-50 p-4 rounded-md max-h-96 overflow-y-auto">
                     <pre className="whitespace-pre-wrap text-sm font-mono">
@@ -262,7 +326,7 @@ export function CallLogsTable({ }: CallLogsTableProps) {
                   <div className="bg-gray-50 p-4 rounded-md">
                     <p className="text-muted-foreground text-sm">
                       {callDetails.status === 'completed' || callDetails.status === 'ended' 
-                        ? 'Transcript not available for this call.' 
+                        ? 'Transcript not available for this call. Click "Debug Messages" to see raw message data.' 
                         : 'Transcript will be available after the call is completed.'}
                     </p>
                   </div>
@@ -284,6 +348,51 @@ export function CallLogsTable({ }: CallLogsTableProps) {
               Failed to load call details
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteConfirmCall} onOpenChange={() => setDeleteConfirmCall(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-red-600" />
+              Delete Call Log
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the call log for {deleteConfirmCall?.recipientName}?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="bg-red-50 border border-red-200 rounded-md p-3">
+              <p className="text-sm text-red-800">
+                <strong>This action cannot be undone.</strong> This will permanently delete:
+              </p>
+              <ul className="text-sm text-red-700 mt-2 ml-4 list-disc">
+                <li>Call log entry</li>
+                <li>Stored transcript (if available)</li>
+                <li>All associated call data</li>
+              </ul>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteConfirmCall(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => deleteConfirmCall && handleDeleteCall(deleteConfirmCall)}
+                className="flex items-center gap-2"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete Call Log
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </Card>

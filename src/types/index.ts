@@ -1,4 +1,3 @@
-// Types for AI Phone Screen application with Vapi integration
 
 export interface Call {
   id: string

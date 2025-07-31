@@ -52,15 +52,40 @@ export async function GET(
         if (call.messages && call.messages.length > 0) {
           const transcriptLines: string[] = []
           
-          call.messages.forEach((message: Record<string, unknown>) => {
-            if (message.role === 'user') {
-              transcriptLines.push(`User: ${message.content || message.message || ''}`)
-            } else if (message.role === 'assistant') {
-              transcriptLines.push(`Assistant: ${message.content || message.message || ''}`)
+          call.messages.forEach((message) => {
+            const messageObj = message as unknown as Record<string, unknown>
+            
+            // Debug: Log the message structure to understand what we're getting
+            console.log('Message object:', JSON.stringify(messageObj, null, 2))
+            
+            // Handle different message types that Vapi might send
+            if (messageObj.role === 'user') {
+              const content = messageObj.content || messageObj.message || messageObj.text || ''
+              if (content) {
+                transcriptLines.push(`Candidate: ${content}`)
+              }
+            } else if (messageObj.role === 'assistant' || messageObj.role === 'bot') {
+              const content = messageObj.content || messageObj.message || messageObj.text || ''
+              if (content) {
+                transcriptLines.push(`AI: ${content}`)
+              }
+            } else if (messageObj.type === 'bot-message' || messageObj.type === 'assistant-message') {
+              const content = messageObj.content || messageObj.message || messageObj.text || ''
+              if (content) {
+                transcriptLines.push(`AI: ${content}`)
+              }
+            } else if (messageObj.type === 'user-message') {
+              const content = messageObj.content || messageObj.message || messageObj.text || ''
+              if (content) {
+                transcriptLines.push(`Candidate: ${content}`)
+              }
+            } else {
+              // Log unknown message types for debugging
+              console.log('Unknown message type:', messageObj.type || messageObj.role || 'no type/role')
             }
           })
           
-          transcript = transcriptLines.join('\n')
+          transcript = transcriptLines.join('\n\n')
           
           // Store transcript locally
           const transcriptData = {
